@@ -79,6 +79,7 @@ int main(int argc, char **argv)
 		.parser = parse_arg,
 		.doc = argp_program_doc,
 	};
+	struct ksyms *ksyms = NULL;
 	struct readahead_bpf *obj;
 	struct hist *histp;
 	int err;
@@ -97,13 +98,82 @@ int main(int argc, char **argv)
 
 	obj = readahead_bpf__open_and_load();
 	if (!obj) {
-		fprintf(stderr, "failed to open and/or load BPF ojbect\n");
+		fprintf(stderr, "failed to open and/or load BPF object\n");
 		return 1;
 	}
 
-	err = readahead_bpf__attach(obj);
+	ksyms = ksyms__load();
+	if (!ksyms) {
+		fprintf(stderr, "failed to load kallsyms\n");
+		goto cleanup;
+	}
+
+	/*
+	 * From v5.10-rc1 (8238287), rename __do_page_cache_readahead() to
+	 * do_page_cache_ra()
+	 */
+	if (ksyms__get_symbol(ksyms, "do_page_cache_ra")) {
+		obj->links.do_page_cache_ra =
+			bpf_program__attach(obj->progs.do_page_cache_ra);
+		err = libbpf_get_error(obj->links.do_page_cache_ra);
+		if (err) {
+			fprintf(stderr, "failed to attach "
+				"do_page_cache_ra: %s\n",
+				strerror(err));
+			goto cleanup;
+		}
+		obj->links.do_page_cache_ra_ret =
+			bpf_program__attach(obj->progs.do_page_cache_ra_ret);
+		err = libbpf_get_error(obj->links.do_page_cache_ra_ret);
+		if (err) {
+			fprintf(stderr, "failed to attach "
+				"do_page_cache_ra_ret: %s\n",
+				strerror(err));
+			goto cleanup;
+		}
+	} else if (ksyms__get_symbol(ksyms, "__do_page_cache_readahead")) {
+		obj->links.do_page_cache_readahead =
+			bpf_program__attach(obj->progs.do_page_cache_readahead);
+		err = libbpf_get_error(obj->links.do_page_cache_readahead);
+		if (err) {
+			fprintf(stderr, "failed to attach "
+				"do_page_cache_readahead: %s\n",
+				strerror(err));
+			goto cleanup;
+		}
+		obj->links.do_page_cache_readahead_ret =
+			bpf_program__attach(obj->progs.do_page_cache_readahead_ret);
+		err = libbpf_get_error(obj->links.do_page_cache_readahead_ret);
+		if (err) {
+			fprintf(stderr, "failed to attach "
+				"do_page_cache_readahead_ret: %s\n",
+				strerror(err));
+			goto cleanup;
+		}
+	} else {
+		fprintf(stderr, "failed to find symbol: do_page_cache_ra/"
+				"__do_page_cache_readahead, "
+				"unsupport kernel version\n");
+		goto cleanup;
+	}
+
+	obj->links.page_cache_alloc_ret =
+		bpf_program__attach(obj->progs.page_cache_alloc_ret);
+	err = libbpf_get_error(obj->links.page_cache_alloc_ret);
 	if (err) {
-		fprintf(stderr, "failed to attach BPF programs\n");
+		fprintf(stderr, "failed to attach "
+			"page_cache_alloc_ret: %s\n",
+			strerror(err));
+		goto cleanup;
+	}
+
+	obj->links.mark_page_accessed =
+		bpf_program__attach(obj->progs.mark_page_accessed);
+	err = libbpf_get_error(obj->links.mark_page_accessed);
+	if (err) {
+		fprintf(stderr, "failed to attach "
+			"mark_page_accessed: %s\n",
+			strerror(err));
 		goto cleanup;
 	}
 
@@ -122,5 +192,6 @@ int main(int argc, char **argv)
 
 cleanup:
 	readahead_bpf__destroy(obj);
+	ksyms__free(ksyms);
 	return err != 0;
 }

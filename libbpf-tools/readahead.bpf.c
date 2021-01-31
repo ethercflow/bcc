@@ -26,14 +26,25 @@ struct {
 
 static struct hist hist;
 
-SEC("fentry/__do_page_cache_readahead")
-int BPF_PROG(do_page_cache_readahead)
+static __always_inline int trace_do_ra_ent(void)
 {
 	u32 pid = bpf_get_current_pid_tgid();
 	u64 one = 1;
 
 	bpf_map_update_elem(&in_readahead, &pid, &one, 0);
 	return 0;
+}
+
+SEC("kprobe/__do_page_cache_readahead")
+int BPF_KPROBE(do_page_cache_readahead)
+{
+	return trace_do_ra_ent();
+}
+
+SEC("kprobe/do_page_cache_ra")
+int BPF_KPROBE(do_page_cache_ra)
+{
+	return trace_do_ra_ent();
 }
 
 SEC("fexit/__page_cache_alloc")
@@ -53,13 +64,24 @@ int BPF_PROG(page_cache_alloc_ret, gfp_t gfp, struct page *ret)
 	return 0;
 }
 
-SEC("fexit/__do_page_cache_readahead")
-int BPF_PROG(do_page_cache_readahead_ret)
+static __always_inline int trace_do_ra_ret(void)
 {
 	u32 pid = bpf_get_current_pid_tgid();
 
 	bpf_map_delete_elem(&in_readahead, &pid);
 	return 0;
+}
+
+SEC("kretprobe/__do_page_cache_readahead")
+int BPF_KRETPROBE(do_page_cache_readahead_ret)
+{
+	return trace_do_ra_ret();
+}
+
+SEC("kretprobe/do_page_cache_ra")
+int BPF_KRETPROBE(do_page_cache_ra_ret)
+{
+	return trace_do_ra_ret();
 }
 
 SEC("fentry/mark_page_accessed")
